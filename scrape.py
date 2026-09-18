@@ -1,3 +1,8 @@
+# Работаем с 
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 from datetime import date, timedelta, datetime, time
 import time as tm
 import pandas as pd
@@ -8,11 +13,18 @@ URL_TEMPLATE = "https://br.so-ups.ru/webapi/api/map/MapPartial?MapType=0&Date={d
 
 
 def download_data(date,time):
-    url = URL_TEMPLATE.format(date=date,hour=time)
-    response = requests.get(url, verify=False)
-    if response.status_code != 200:
-        return {}
-    return response.json()
+    response_code = 429
+    while response_code == 429:
+        url = URL_TEMPLATE.format(date=date,hour=time)
+        response = requests.get(url, verify=False)
+        response_code = response.status_code
+        if response_code != 200 and response_code != 429:
+            return {"error_code": response_code}
+        if response_code == 200:
+            return response.json()
+        print("Слишком много запросов! перепробуем...")
+        tm.sleep(1)
+    return {"error_code": 0}
 
 def parse_json(data):
     if data == {}:
@@ -28,20 +40,28 @@ def parse_json(data):
 def iterate_through_dates(start, end):
     result = []
     current = start
+
+    convenience_counter = 0
+    counter_target = (end-start).days * 24
     
     while current <= end:
+        convenience_counter += 1
         date_str = str(current)
         for hour in range(23):
+            print("Запрашиваю {}/{}...",convenience_counter,counter_target)
             data = parse_json(download_data(date_str,str(hour)))
-            if data == {}:
+            if 'error_code' in data:
+                print('Данные не получены с кодом: {}',data['error_code'])
                 continue
+            
             data["date"] = str(datetime.combine(current,time(hour,0)))
             result.append(data)
-            tm.sleep(1.)
+            print('Успех! данные добавлены')
+            tm.sleep(0.5)
 
 
         current += timedelta(days=1)
-        tm.sleep(1.)
+        tm.sleep(0.5)
 
     return result
 
