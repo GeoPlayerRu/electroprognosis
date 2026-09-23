@@ -6,10 +6,14 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from datetime import date, timedelta, datetime, time
 import time as tm
 import pandas as pd
-import numpy as np
+#import numpy as np
 import requests
 
 URL_TEMPLATE = "https://br.so-ups.ru/webapi/api/map/MapPartial?MapType=0&Date={date}&Hour={hour}&PowerSystemId=630000&SubjectId=75&ServiceMode=false"
+
+def backup_on_fail(data: pd.DataFrame, path: str):
+    new_path = path.replace('.csv','_backpup.csv')
+    data.to_csv(new_path)
 
 
 def download_data(date,time):
@@ -26,15 +30,36 @@ def download_data(date,time):
         tm.sleep(1)
     return {"error_code": 0}
 
-def parse_json(data):
-    if data == {}:
-        return {}
+def parse_json(data: dict):
+    if not 'MainArea' in data or \
+            not 'IBR_PlannedConsumption' in data['MainArea'] or \
+            not 'IBR_ActualConsumption' in data['MainArea'] or \
+            not 'IBR_PlannedGeneration' in data['MainArea'] or \
+            not 'IBR_ActualGeneration' in data['MainArea'] or \
+            not 'IBR_AveragePrice' in data['MainArea']:
+                return data
+
+    planned_consumption = data["MainArea"]["IBR_PlannedConsumption"].replace(' МВт*ч', '').replace(' ','')
+    if planned_consumption == '-':
+        planned_consumption = '0'
+    actual_consumption = data["MainArea"]["IBR_ActualConsumption"].replace(' МВт*ч', '').replace(' ','')
+    if actual_consumption == '-':
+        actual_consumption = '0'
+    planned_generation = data["MainArea"]["IBR_PlannedGeneration"].replace(' МВт*ч', '').replace(' ','')
+    if planned_generation == '-':
+        planned_generation = '0'
+    actual_generation = data["MainArea"]["IBR_ActualGeneration"].replace(' МВт*ч', '').replace(' ','')
+    if actual_generation == '-':
+        actual_generation = '0'
+    average_price = data["MainArea"]["IBR_AveragePrice"].replace(' руб./МВт*ч','').replace(' ','')
+    if average_price == '-':
+        average_price = '0'
     return {
-        "planned_consumption": int(data["MainArea"]["IBR_PlannedConsumption"].replace(' МВт*ч', '').replace(' ','')),
-        "actual_consumption": int(data["MainArea"]["IBR_ActualConsumption"].replace(' МВт*ч', '').replace(' ','')),
-        "planned_generation": int(data["MainArea"]["IBR_PlannedGeneration"].replace(' МВт*ч', '').replace(' ','')),
-        "actual_generation": int(data["MainArea"]["IBR_ActualGeneration"].replace(' МВт*ч', '').replace(' ','')),
-        "average_price": int(data["MainArea"]["IBR_AveragePrice"].replace(' руб./МВт*ч','').replace(' ',''))
+            "planned_consumption" : int(planned_consumption),
+            "actual_consumption" : int(actual_consumption),
+            "planned_generation" : int(planned_generation),
+            "actual_generation" : int(actual_generation),
+            "average_price" : int(average_price),
             }
 
 def iterate_through_dates(start, end):
@@ -45,23 +70,41 @@ def iterate_through_dates(start, end):
     counter_target = (end-start).days * 24
     
     while current <= end:
-        convenience_counter += 1
         date_str = str(current)
         for hour in range(23):
-            print("Запрашиваю {}/{}...",convenience_counter,counter_target)
-            data = parse_json(download_data(date_str,str(hour)))
+            convenience_counter += 1
+            print(f"Запрашиваю {convenience_counter}/{counter_target}...")
+            downloaded = {}
+            data = {'error_code' : 0}
+            retries = 4
+            while retries > 0:
+                try:
+                    downloaded = download_data(date_str,str(hour))
+                    data = parse_json(downloaded)
+                    break
+                except:
+                    retries -= 1
+                    if retries != 0:
+                        print(f"Неизвестная ошибка! Попытка возобновить: {4-retries}/4")
+                        tm.sleep(2)
+                        continue
+                    print('Загрузка данных была прервана на', str(datetime.combine(current,time(hour,0))))
+                    print('Последние загруженные данные помещены в файл latest.json')
+                    with open('latest.json', 'w') as file:
+                        file.write(str(downloaded))
+                    return result
             if 'error_code' in data:
-                print('Данные не получены с кодом: {}',data['error_code'])
+                print('Данные не получены с кодом: {}.',data['error_code'])
                 continue
             
             data["date"] = str(datetime.combine(current,time(hour,0)))
             result.append(data)
             print('Успех! данные добавлены')
-            tm.sleep(0.5)
+            tm.sleep(0.1)
 
 
         current += timedelta(days=1)
-        tm.sleep(0.5)
+        tm.sleep(0.1)
 
     return result
 
