@@ -9,17 +9,17 @@ import pandas as pd
 #import numpy as np
 import requests
 
-URL_TEMPLATE = "https://br.so-ups.ru/webapi/api/map/MapPartial?MapType=0&Date={date}&Hour={hour}&PowerSystemId=630000&SubjectId=75&ServiceMode=false"
+URL_TEMPLATE = "https://br.so-ups.ru/webapi/api/map/MapPartial?MapType=0&Date={date}&Hour={hour}&PowerSystemId=630000&SubjectId={subject}&ServiceMode=false"
 
 def backup_on_fail(data: pd.DataFrame, path: str):
     new_path = path.replace('.csv','_backpup.csv')
     data.to_csv(new_path)
 
 
-def download_data(date,time):
+def download_data(date,time,subject):
     response_code = 429
     while response_code == 429:
-        url = URL_TEMPLATE.format(date=date,hour=time)
+        url = URL_TEMPLATE.format(date=date,hour=time,subject=subject)
         response = requests.get(url, verify=False)
         response_code = response.status_code
         if response_code != 200 and response_code != 429:
@@ -62,7 +62,7 @@ def parse_json(data: dict):
             "average_price" : int(average_price),
             }
 
-def iterate_through_dates(start, end):
+def iterate_through_dates(start, end, subject):
     result = []
     current = start
 
@@ -79,7 +79,7 @@ def iterate_through_dates(start, end):
             retries = 4
             while retries > 0:
                 try:
-                    downloaded = download_data(date_str,str(hour))
+                    downloaded = download_data(date_str,str(hour),subject)
                     data = parse_json(downloaded)
                     break
                 except:
@@ -108,10 +108,28 @@ def iterate_through_dates(start, end):
 
     return result
 
+regions = {
+        "75" : "Челябинская область",
+        "33" : "Кировская область",
+        "37" : "Курганская область",
+        "53" : "Оренбургская область",
+        "57" : "Пермский край",
+        "80" : "Республика Башкортостан",
+        "65" : "Свердловская область",
+        "71" : "Тюменская область",
+        "94" : "Удмуртская республика",
+}
+
 def main():
+    subject = '-1'
+    while not subject in regions.keys() and subject != '':
+        subject = input(f"Доступные регионы:{'\n'.join([k+' - '+str(v) for k,v in regions.items()])}\nРегион (75):")
     filename = input("Файл сохранения (data.csv): ")
     start_unformatted = input("Дата начала (2022-01-01) ")
     end_unformatted = input("Дата конца (сегодняшний день) ")
+    
+    if subject == "":
+        subject = "75"
 
     if filename == "":
         filename = "data.csv"
@@ -127,8 +145,8 @@ def main():
     start = date(start_split[0],start_split[1],start_split[2])
     end = date(end_split[0], end_split[1], end_split[2])
 
-    df = pd.DataFrame(iterate_through_dates(start,end))
-    df.to_csv(filename)
+    df = pd.DataFrame(iterate_through_dates(start,end,subject))
+    df.to_csv(filename.replace('.csv',f'_{subject}.csv'))
 
 if __name__ == "__main__":
     main()
